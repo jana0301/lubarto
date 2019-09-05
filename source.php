@@ -8,15 +8,17 @@ include 'RecursiveDOMIterator.php';
 use PhpContentParser\RecursiveDOMIterator;
 use GuzzleHttp\Client;
 
-const DELIMITER = '<i>';
-const DELIMITER_CLOSING = '</i>';
+const DELIMITER = '<b>';
+const DELIMITER2 = '<i>';
+const DELIMITER_CLOSING = '</b>';
+const DELIMITER2_CLOSING = '</i>';
 const BLUEPRINT_PLACEHOLDER_FORMAT = '[%d]';
 const GOOGLE_TRANSLATE_API_KEY = 'AIzaSyBtjj5CX1whbkPNOiwPvxNSDFfC5_FWS2s';
 const GOOGLE_TRANSLATE_ENDPOINT = 'https://translation.googleapis.com/language/translate/v2';
 
 $dom = new DomDocument();
 
-$htmlPath = 'sample_data/message1.html';
+$htmlPath = 'sample_data/message3.html';
 
 $dom->loadHTMLFile($htmlPath);
 
@@ -28,13 +30,22 @@ $domBlueprint = createOutputBlueprint($dom);
 $translationStr = prepareTranslationString(getDOMElementsArray($dom, true));
 $translated = translate($translationStr, 'hr', 'en');
 $output = restoreTranslationContent($translated, $domBlueprint);
-var_dump($output);
+//print_r($domBlueprint);
+/*printRawHTML($translationStr);
+printRawHTML($translated);
+printRawHTML($output);*/
+echo $output;
+
+function printRawHTML($html) {
+    print_r("<pre>" . htmlentities(print_r($html, true)) . "</pre>");
+}
 
 function translate($translationString, $source, $target) : string {
+    //print_r($translationString);
     $data = [
         "q"             => $translationString,
         "source"        => "en",
-        "target"        => "hr",
+        "target"        => "es",
         "format"        => "html"
     ];
     $httpClient = new Client();
@@ -48,7 +59,8 @@ function translate($translationString, $source, $target) : string {
     ]);
     
     $responseJson = json_decode($response->getBody());
-    $translated = str_replace(DELIMITER_CLOSING, '', $responseJson->data->translations[0]->translatedText);
+    //var_dump($responseJson);
+    $translated = str_replace(DELIMITER_CLOSING, '', str_replace(DELIMITER2_CLOSING, '', $responseJson->data->translations[0]->translatedText));
     return $translated;
 }
 
@@ -102,19 +114,28 @@ function getDOMElementsArray(DOMDocument $dom, $extractBody = false) : array {
 function prepareTranslationString($elements) : string {
     $translationArray = [];
     $blockLevelIndex = 0;
+    $translationStr = '';
 
     foreach($elements as $element) {
         if(isset($element->childs)) {
-            foreach($element->childs as $childElement) {
+            foreach($element->childs as $childKey => $childElement) {
                 if ($childElement->nodeName == "#text") {
-                    $translationArray[] = refineTextContent($childElement->textContent);
+                    $content = refineTextContent($childElement->textContent);
+                    $translationArray[$blockLevelIndex] = $content;
+
+                    if ($blockLevelIndex % 2 == 0) $translationStr .= $content . DELIMITER;
+                    else $translationStr .= $content. DELIMITER2;
+
+                    $blockLevelIndex++;
                 }
             }
-            $blockLevelIndex++;
         }
     }
+
+    //print_r($translationArray);
     
-    $translationStr = implode(DELIMITER, $translationArray);
+    //$translationStr = implode(DELIMITER, $translationArray);
+    //print_r($translationStr.PHP_EOL);
     return $translationStr;
 }
 
@@ -123,16 +144,65 @@ function refineTextContent($content) : string {
 }
 
 function restoreTranslationContent($translationString, DOMDocument $blueprint) {
-    $test = preg_split('~(?<!\\\)' . preg_quote(DELIMITER, '~') . '~', $translationString);
-    $output = $blueprint->saveHTML();
-    $key = 0;
+    //print_r($translationString);
+    $test = explode(DELIMITER, $translationString);
+    //print_r($test);
+    $sameDividerCounter = 0;
+    $prevKey = null;
+    foreach($test as $key => $value) {
+        if (strpos($value, DELIMITER2) === false) {
+            $sameDividerCounter++;
+            if ($sameDividerCounter > 1) {
+                $test[$prevKey] .= $value;
+                unset($test[$key]);
+            }
+        }
+        else {
+            $sameDividerCounter = 0;
+        }
+        if ($prevKey != null && isset($test[$prevKey])) {
+            $startingSubstr = substr($value, 0, strlen(DELIMITER2));
+            $prevEndingSubstr = substr($test[$prevKey], 0 - strlen(DELIMITER2));
+            if ($prevEndingSubstr) {
+                if ($startingSubstr === DELIMITER2 && 
+                    $prevEndingSubstr === DELIMITER2
+                ) {
+                    $value = substr($value, strlen(DELIMITER2));
+                    $test[$key] = $value;
+                }
+            }
+        }
+        $prevKey = $key;
+    }
+    //print_r($test);
+
+    $outputArray = [];
     foreach($test as $value) {
-        // istestirati (dodano zbog slucaja gdje google translate sam dodaje uzastopne tagove/delimitere)
-        if (!empty($value)) {
-            $output = str_replace("[$key]", $value, $output);
-            $key++;
+        $exploded = explode(DELIMITER2, $value);
+        foreach($exploded as $explodedItem) {
+            $outputArray[] = $explodedItem;
         }
     }
+    //print_r($outputArray);
+
+    //$test = preg_split('~(?<!\\\)' . preg_quote(DELIMITER, '~') . '~', $translationString);
+    $output = $blueprint->saveHTML();
+    $splitValues = [];
+    $replaceValues = [];
+    $key = 0;
+    foreach($outputArray as $value) {
+        $splitValues[] = $value;
+        // istestirati (dodano zbog slucaja gdje google translate sam dodaje uzastopne tagove/delimitere)
+        //if (!empty($value)) {
+            $output = str_replace("[$key]", $value, $output);
+            $replaceValues[] = $value;
+            $key++;
+        //}
+    }
+    //print_r($translationString);
+    //print_r($outputArray);
+    /*print_r($splitValues);
+    print_r($replaceValues);*/
 
     return $output;
 }
