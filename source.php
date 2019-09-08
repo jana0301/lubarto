@@ -22,6 +22,7 @@ $dom = new DomDocument();
 
 if (isset($_POST["d"])) {
     $data = $_POST["d"];
+    error_log(print_r($_REQUEST, true));
     $dom->loadHTML($data);
     $domBlueprint = createOutputBlueprint($dom);
     $translationStr = prepareTranslationString(getDOMElementsArray($dom, true));
@@ -54,12 +55,13 @@ function printRawHTML($html) {
 }
 
 function translate($translationString, $source, $target) : string {
-    //print_r($translationString);
+    //print_r($translationString . PHP_EOL);
     $data = [
         "q"             => $translationString,
         "source"        => "en",
-        "target"        => "de",
-        "format"        => "html"
+        "target"        => "hr",
+        "format"        => "html",
+        "model"         => "nmt"
     ];
     $httpClient = new Client();
     $headers = [
@@ -72,10 +74,40 @@ function translate($translationString, $source, $target) : string {
     ]);
     
     $responseJson = json_decode($response->getBody());
-    //var_dump($responseJson);
-    //$translated = str_replace(DELIMITER_CLOSING, '', str_replace(DELIMITER2_CLOSING, '', $responseJson->data->translations[0]->translatedText));
-    $translated = str_replace(DELIMITER2_CLOSING, '', $responseJson->data->translations[0]->translatedText);
-    return $translated;
+    //print_r(PHP_EOL . $responseJson->data->translations[0]->translatedText . PHP_EOL);
+    $translatedText = $responseJson->data->translations[0]->translatedText;
+    $clearedTranslatedText = substr($translatedText, 0, strrpos($translatedText, '|'));
+    $reversed = strrev($clearedTranslatedText);
+    //print_r(PHP_EOL . $reversed . PHP_EOL);
+    $reversedFixedHTML = '';
+    for ($i = 0; $i < strlen($reversed); $i++) {
+        $character = $reversed[$i];
+        if ($character == '<') $character = '>';
+        else if ($character == '>') $character = '<';
+        $reversedFixedHTML .= $character;
+    }
+    $reversedFixedHTML = str_replace('<b/>', '</b>', str_replace('<i/>', '</i>', $reversedFixedHTML));
+    //print_r(PHP_EOL . 'reversedFixed: ' . $reversedFixedHTML . PHP_EOL);
+    //print_r(PHP_EOL . strrev((strrev($responseJson->data->translations[0]->translatedText))) . PHP_EOL);
+    $translated = preg_replace_callback('/<\/b\b[^<]*>((?:(?!<\/?b\b).)+|(?R))*<b>\s*/', function($matches) {
+        return strip_tags($matches[0]);
+    }, $reversedFixedHTML, -1);
+    $translated = preg_replace_callback('/<\/i\b[^<]*>((?:(?!<\/?i\b).)+|(?R))*<i>\s*/', function($matches) {
+        return strip_tags($matches[0]);
+    }, $translated, -1);
+    //print_r('translated:' . $translated);
+
+    $translatedReverseRestored = strrev($translated);
+    $translatedFixedReverseRestored = '';
+    for ($i = 0; $i < strlen($translatedReverseRestored); $i++) {
+        $character = $translatedReverseRestored[$i];
+        if ($character == '<') $character = '>';
+        else if ($character == '>') $character = '<';
+        $translatedFixedReverseRestored .= $character;
+    }
+
+    //print_r(PHP_EOL . $translatedFixedReverseRestored);
+    return $translatedFixedReverseRestored;
 }
 
 function createOutputBlueprint(DOMDocument $dom) : DOMDocument {
@@ -150,8 +182,8 @@ function prepareTranslationString($elements) : string {
             }
         }
     }
-    print_r($translationArray);
-    return $translationStr;
+    //print_r($translationArray);
+    return $translationStr . '|';
 }
 
 function refineTextContent($content) : string {
@@ -159,10 +191,8 @@ function refineTextContent($content) : string {
 }
 
 function restoreTranslationContent($translationString, DOMDocument $blueprint) {
-    $translationString = preg_replace('/(<\/b>)+$/', '', $translationString);
-    $translationString = preg_replace('/(<\/i>)+$/', '', $translationString);
     $test = explode(DELIMITER, $translationString);
-    print_r($test);
+    //print_r($test);
     $sameDividerCounter = 0;
     $prevKey = null;
     foreach($test as $key => $value) {
@@ -178,11 +208,11 @@ function restoreTranslationContent($translationString, DOMDocument $blueprint) {
         }
 
         if ($prevKey != null && isset($test[$prevKey])) {
-            if (strpos($test[$prevKey], DELIMITER_CLOSING) !== false) {
+            /*if (strpos($test[$prevKey], DELIMITER_CLOSING) !== false) {
                 $test[$key] = substr($value, strlen(DELIMITER2));
-            }
+            }*/
 
-            if (strpos($value, DELIMITER_CLOSING) !== false) {
+            if (strpos($test[$prevKey], DELIMITER_CLOSING) !== false) {
                 $test[$prevKey] .= $value;
                 unset($test[$key]);
             }
@@ -197,7 +227,7 @@ function restoreTranslationContent($translationString, DOMDocument $blueprint) {
 
         $prevKey = $key;
     }
-    print_r($test);
+    //print_r($test);
     
     $outputArray = [];
     foreach($test as $value) {
@@ -209,7 +239,7 @@ function restoreTranslationContent($translationString, DOMDocument $blueprint) {
         }
     }
     //print_r('outputarray');
-    print_r($outputArray);
+    //print_r($outputArray);
 
     //$test = preg_split('~(?<!\\\)' . preg_quote(DELIMITER, '~') . '~', $translationString);
     $output = $blueprint->saveHTML();
@@ -223,7 +253,7 @@ function restoreTranslationContent($translationString, DOMDocument $blueprint) {
         $key++;
     }
 
-    print_r($blueprint->saveHTML());
+    //print_r($blueprint->saveHTML());
 
     return $output;
 }
