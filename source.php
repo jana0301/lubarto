@@ -10,22 +10,30 @@ use GuzzleHttp\Client;
 
 const DELIMITER = '<b>';
 const DELIMITER_CLOSING = '</b>';
+const DELIMITER_CLOSING_REV = '<b/>';
+const DELIMITER_END_OF_PARAGRAPH = '|';
 const BLUEPRINT_PLACEHOLDER_FORMAT = '[%d]';
 const GOOGLE_TRANSLATE_API_KEY = 'AIzaSyBtjj5CX1whbkPNOiwPvxNSDFfC5_FWS2s';
 const GOOGLE_TRANSLATE_ENDPOINT = 'https://translation.googleapis.com/language/translate/v2';
 
 $dom = new DomDocument();
 
-
-
 if (isset($_POST["d"])) {
     $data = $_POST["d"];
+    $targetLang = $_POST["target"];
     $dom->loadHTML($data);
+    $rawTranslationInput = getRawTranslationInput($dom);
     $domBlueprint = createOutputBlueprint($dom);
-    $translationStr = prepareTranslationString(getDOMElementsArray($dom, true));
-    $translated = translate($translationStr, 'hr', 'en');
+    $translationElements = getDOMElementsArray($dom, true);
+    $translationStr = prepareTranslationString($translationElements);
+    $translated = translate($translationStr, 'en', $targetLang);
     $output = restoreTranslationContent($translated, $domBlueprint);
-    echo $output;
+    $output['translation_input'] = $translationStr;
+    $output['raw_translation_input'] = $rawTranslationInput;
+    $output['raw_translation_input_text'] = strip_tags($rawTranslationInput);
+    $output['stats'] = getStats($rawTranslationInput, $translationStr);
+    header('Content-Type: application/json');
+    echo json_encode($output);
     die();
 }
 
@@ -42,21 +50,40 @@ $translationStr = prepareTranslationString(getDOMElementsArray($dom, true));
 $translated = translate($translationStr, 'hr', 'en');
 $output = restoreTranslationContent($translated, $domBlueprint);
 
-echo "ORIGINAL<hr>";
+/*echo "ORIGINAL<hr>";
 echo $body->item(0)->ownerDocument->saveHTML();
 echo "TRANSLATED<hr>";
-echo $output;
+print_r($output);*/
 
 function printRawHTML($html) {
     print_r("<pre>" . htmlentities(print_r($html, true)) . "</pre>");
+}
+
+function getStats($rawInput, $translationInput) : array {
+    $rawInputLength = strlen($rawInput);
+    $rawInputNoHtmlLength = strlen(strip_tags($rawInput));
+    $translationInputLength = strlen($translationInput);
+
+    $rawInputTranslationInputDiff = round((($translationInputLength/$rawInputLength)*100)-100, 2);
+    $rawInputNoHtmlTranslationInputDiff = round((($translationInputLength/$rawInputNoHtmlLength)*100)-100, 2);
+    $rawInputNoHtmlRawInputDiff = round((($rawInputLength/$rawInputNoHtmlLength)*100)-100, 2);
+
+    return [
+        'raw_input_length'              => $rawInputLength,
+        'raw_input_no_html_length'      => $rawInputNoHtmlLength,
+        'translation_input_length'      => $translationInputLength,
+        'raw_input_transl_diff'         => $rawInputTranslationInputDiff,
+        'raw_input_no_html_transl_diff' => $rawInputNoHtmlTranslationInputDiff,
+        'raw_input_no_html_raw_diff'    => $rawInputNoHtmlRawInputDiff
+    ];
 }
 
 function translate($translationString, $source, $target) : string {
     //print_r($translationString . PHP_EOL);
     $data = [
         "q"             => $translationString,
-        "source"        => "en",
-        "target"        => "es",
+        "source"        => $source,
+        "target"        => $target,
         "format"        => "html",
         "model"         => "nmt"
     ];
@@ -71,37 +98,9 @@ function translate($translationString, $source, $target) : string {
     ]);
     
     $responseJson = json_decode($response->getBody());
-    //print_r(PHP_EOL . $responseJson->data->translations[0]->translatedText . PHP_EOL);
     $translatedText = $responseJson->data->translations[0]->translatedText;
-    $clearedTranslatedText = substr($translatedText, 0, strrpos($translatedText, '|'));
-    $reversed = strrev($clearedTranslatedText);
-    //print_r(PHP_EOL . $reversed . PHP_EOL);
-    $reversedFixedHTML = '';
-    for ($i = 0; $i < strlen($reversed); $i++) {
-        $character = $reversed[$i];
-        if ($character == '<') $character = '>';
-        else if ($character == '>') $character = '<';
-        $reversedFixedHTML .= $character;
-    }
-    $reversedFixedHTML = str_replace('<b/>', '</b>', str_replace('<i/>', '</i>', $reversedFixedHTML));
-    //print_r(PHP_EOL . 'reversedFixed: ' . $reversedFixedHTML . PHP_EOL);
-    //print_r(PHP_EOL . strrev((strrev($responseJson->data->translations[0]->translatedText))) . PHP_EOL);
-    $translated = preg_replace_callback('/<\/b\b[^<]*>((?:(?!<\/?b\b).)+|(?R))*<b>\s*/', function($matches) {
-        return strip_tags($matches[0]);
-    }, $reversedFixedHTML, -1);
-    //print_r('translated:' . $translated);
-
-    $translatedReverseRestored = strrev($translated);
-    $translatedFixedReverseRestored = '';
-    for ($i = 0; $i < strlen($translatedReverseRestored); $i++) {
-        $character = $translatedReverseRestored[$i];
-        if ($character == '<') $character = '>';
-        else if ($character == '>') $character = '<';
-        $translatedFixedReverseRestored .= $character;
-    }
-
-    //print_r(PHP_EOL . $translatedFixedReverseRestored);
-    return $translatedFixedReverseRestored;
+    
+    return $translatedText;
 }
 
 function createOutputBlueprint(DOMDocument $dom) : DOMDocument {
@@ -131,6 +130,18 @@ function createOutputBlueprint(DOMDocument $dom) : DOMDocument {
     }
 
     return $domBlueprint;
+}
+
+function getRawTranslationInput(DOMDocument $dom) {
+    $body = $dom;
+    if ($dom->getElementsByTagName('body')->length != 0) {
+        $body = $dom->getElementsByTagName('body')->item(0);
+    }
+    $html = '';
+    foreach($body->childNodes as $node) {
+        $html .= $dom->saveHTML($node);
+    }
+    return $html;
 }
 
 function getDOMElementsArray(DOMDocument $dom, $extractBody = false) : array {
@@ -164,7 +175,7 @@ function prepareTranslationString($elements) : string {
                     $content = refineTextContent($childElement->textContent);
                     $translationArray[$blockLevelIndex] = $content;
 
-                    $translationStr .= $content . (($childKey == $lastChildKey) ? '|' : '') . DELIMITER;
+                    $translationStr .= $content . (($childKey == $lastChildKey) ? DELIMITER_END_OF_PARAGRAPH : '') . DELIMITER;
 
                     $blockLevelIndex++;
                 }
@@ -172,20 +183,48 @@ function prepareTranslationString($elements) : string {
         }
     }
     //print_r($translationArray);
-    return $translationStr . '|';
+    return $translationStr . DELIMITER_END_OF_PARAGRAPH;
 }
 
 function refineTextContent($content) : string {
     return str_replace(DELIMITER, '\\' . DELIMITER, htmlspecialchars_decode($content));
 }
 
-function restoreTranslationContent($translationString, DOMDocument $blueprint) {
-    $translationArray = preg_split('~(?<!\\\)' . preg_quote(DELIMITER, '~') . '~', $translationString);
-    print_r($translationArray);
+function reverseTranslatedText($translatedText) {
+    $translReversingReplacements = [
+        '<' => '>',
+        '>' => '<'
+    ];
+
+    $reverseTranslated = '';
+    for($i = strlen($translatedText)-1 ; $i >= 0 ; $i--) {
+        $reversedTxt = $translatedText[$i];
+        if (array_key_exists($reversedTxt, $translReversingReplacements)) {
+            $reversedTxt = $translReversingReplacements[$reversedTxt];
+        }
+        $reverseTranslated .= $reversedTxt;
+    }
+    $reverseTranslated = str_replace(DELIMITER_CLOSING_REV, DELIMITER_CLOSING, $reverseTranslated);
+
+    return $reverseTranslated;
+}
+
+function restoreTranslationContent($translationString, DOMDocument $blueprint) : array {
+    $clearedTranslatedText = substr($translationString, 0, strrpos($translationString, DELIMITER_END_OF_PARAGRAPH));
+
+    $reverseTranslated = reverseTranslatedText($clearedTranslatedText);
+    
+    $translatedDelimitersFixed = preg_replace_callback('/<\/b\b[^<]*>((?:(?!<\/?b\b).)+|(?R))*<b>\s*/', function($matches) {
+        return strip_tags($matches[0]);
+    }, $reverseTranslated, -1);
+
+    $translatedReverseRestored = reverseTranslatedText($translatedDelimitersFixed);
+
+    $translationArray = preg_split('~(?<!\\\)' . preg_quote(DELIMITER, '~') . '~', $translatedReverseRestored);
 
     $outputArray = [];
     foreach($translationArray as $translationArrayItem) {
-        $outputArray[] = rtrim($translationArrayItem, ' | ') . ' ';
+        $outputArray[] = rtrim($translationArrayItem, ' ' . DELIMITER_END_OF_PARAGRAPH . ' ') . ' ';
     }
     
     $output = $blueprint->saveHTML();
@@ -195,9 +234,16 @@ function restoreTranslationContent($translationString, DOMDocument $blueprint) {
         $key++;
     }
 
-    print_r($blueprint->saveHTML());
+    $blueprintData = $blueprint->saveHTML();
 
-    return $output;
+    $outputData = [
+        'translation'               => $output,
+        'raw_translation_output'    => $translationString,
+        'blueprint_values'          => $outputArray,
+        'blueprint'                 => $blueprintData
+    ];
+
+    return $outputData;
 }
 
 function getElementAttributes(DOMNode $element) : array {
