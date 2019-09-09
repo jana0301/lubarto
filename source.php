@@ -9,9 +9,7 @@ use PhpContentParser\RecursiveDOMIterator;
 use GuzzleHttp\Client;
 
 const DELIMITER = '<b>';
-const DELIMITER2 = '<i>';
 const DELIMITER_CLOSING = '</b>';
-const DELIMITER2_CLOSING = '</i>';
 const BLUEPRINT_PLACEHOLDER_FORMAT = '[%d]';
 const GOOGLE_TRANSLATE_API_KEY = 'AIzaSyBtjj5CX1whbkPNOiwPvxNSDFfC5_FWS2s';
 const GOOGLE_TRANSLATE_ENDPOINT = 'https://translation.googleapis.com/language/translate/v2';
@@ -22,7 +20,6 @@ $dom = new DomDocument();
 
 if (isset($_POST["d"])) {
     $data = $_POST["d"];
-    error_log(print_r($_REQUEST, true));
     $dom->loadHTML($data);
     $domBlueprint = createOutputBlueprint($dom);
     $translationStr = prepareTranslationString(getDOMElementsArray($dom, true));
@@ -59,7 +56,7 @@ function translate($translationString, $source, $target) : string {
     $data = [
         "q"             => $translationString,
         "source"        => "en",
-        "target"        => "hr",
+        "target"        => "es",
         "format"        => "html",
         "model"         => "nmt"
     ];
@@ -92,9 +89,6 @@ function translate($translationString, $source, $target) : string {
     $translated = preg_replace_callback('/<\/b\b[^<]*>((?:(?!<\/?b\b).)+|(?R))*<b>\s*/', function($matches) {
         return strip_tags($matches[0]);
     }, $reversedFixedHTML, -1);
-    $translated = preg_replace_callback('/<\/i\b[^<]*>((?:(?!<\/?i\b).)+|(?R))*<i>\s*/', function($matches) {
-        return strip_tags($matches[0]);
-    }, $translated, -1);
     //print_r('translated:' . $translated);
 
     $translatedReverseRestored = strrev($translated);
@@ -170,12 +164,7 @@ function prepareTranslationString($elements) : string {
                     $content = refineTextContent($childElement->textContent);
                     $translationArray[$blockLevelIndex] = $content;
 
-                    if ($blockLevelIndex % 2 == 0) {
-                        $translationStr .= $content . (($childKey == $lastChildKey) ? '|' : '') . DELIMITER;
-                    }
-                    else {
-                        $translationStr .= $content . (($childKey == $lastChildKey) ? '|' : '') . DELIMITER2;
-                    }
+                    $translationStr .= $content . (($childKey == $lastChildKey) ? '|' : '') . DELIMITER;
 
                     $blockLevelIndex++;
                 }
@@ -191,69 +180,22 @@ function refineTextContent($content) : string {
 }
 
 function restoreTranslationContent($translationString, DOMDocument $blueprint) {
-    $test = explode(DELIMITER, $translationString);
-    //print_r($test);
-    $sameDividerCounter = 0;
-    $prevKey = null;
-    foreach($test as $key => $value) {
-        if (strpos($value, DELIMITER2) === false) {
-            $sameDividerCounter++;
-            if ($sameDividerCounter > 1) {
-                $test[$prevKey] .= $value;
-                unset($test[$key]);
-            }
-        }
-        else {
-            $sameDividerCounter = 0;
-        }
+    $translationArray = preg_split('~(?<!\\\)' . preg_quote(DELIMITER, '~') . '~', $translationString);
+    print_r($translationArray);
 
-        if ($prevKey != null && isset($test[$prevKey])) {
-            /*if (strpos($test[$prevKey], DELIMITER_CLOSING) !== false) {
-                $test[$key] = substr($value, strlen(DELIMITER2));
-            }*/
-
-            if (strpos($test[$prevKey], DELIMITER_CLOSING) !== false) {
-                $test[$prevKey] .= $value;
-                unset($test[$key]);
-            }
-        }
-        /*$startingSubstr = substr($value, 0, strlen(DELIMITER2));
-        if ($startingSubstr === DELIMITER2) {
-            if (strpos($value, DELIMITER_CLOSING) === false) {
-                $value = substr($value, strlen(DELIMITER2));
-                $test[$key] = $value;
-            }
-        }*/
-
-        $prevKey = $key;
-    }
-    //print_r($test);
-    
     $outputArray = [];
-    foreach($test as $value) {
-        // added to fix repeating delimiters - if DELIMITER2 values are repeated, replace with only 1
-        $exploded = explode(DELIMITER2, preg_replace('#(<i\s?/?>)+#', '<i>', $value));
-        
-        foreach($exploded as $explodedItem) {
-            $outputArray[] = rtrim($explodedItem, ' | ') . ' ';
-        }
+    foreach($translationArray as $translationArrayItem) {
+        $outputArray[] = rtrim($translationArrayItem, ' | ') . ' ';
     }
-    //print_r('outputarray');
-    //print_r($outputArray);
-
-    //$test = preg_split('~(?<!\\\)' . preg_quote(DELIMITER, '~') . '~', $translationString);
+    
     $output = $blueprint->saveHTML();
-    $splitValues = [];
-    $replaceValues = [];
     $key = 0;
     foreach($outputArray as $value) {
-        $splitValues[] = $value;
         $output = str_replace(DELIMITER_CLOSING, '', str_replace("[$key]", $value, $output));
-        $replaceValues[] = $value;
         $key++;
     }
 
-    //print_r($blueprint->saveHTML());
+    print_r($blueprint->saveHTML());
 
     return $output;
 }
