@@ -87,9 +87,7 @@ function translate($translationString, $source, $target) : string {
         "format"        => "html",
         "model"         => "nmt"
     ];
-    $httpClient = new Client(['defaults' => [
-        'verify' => false
-    ]]);
+    $httpClient = new Client(['verify' => false]);
     $headers = [
         'Content-Type'  => 'application/json'
     ];
